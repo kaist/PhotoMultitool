@@ -51,8 +51,29 @@ def esp_get(remote, local):
     print(f"[GET] {remote} -> {local}")
     run_cmd(f'{AMPY} get "{remote}" "{local}"')
 
+def esp_rm_recursive(path=""):
+    """Удалить всё содержимое в папке на ESP (рекурсивно)."""
+    items = esp_ls_recursive(path)
+    if not items:
+        return
+    # Сначала удаляем файлы
+    for p in items:
+        if not p.endswith('/'):
+            print(f"[DEL] {p}")
+            run_cmd(f'{AMPY} rm "{p}"')
+    # Потом удаляем папки (с конца, чтобы удалять пустые)
+    for p in sorted(items, reverse=True):
+        if p.endswith('/'):
+            print(f"[RMDIR] {p}")
+            run_cmd(f'{AMPY} rmdir "{p}"')
+
 def sync(local_dir="flash", remote_dir=""):
-    """Синхронизация локальной папки с ESP (заливка)."""
+    """Синхронизация локальной папки с ESP (заливка).
+       Перед этим полностью очищает папку назначения.
+    """
+    print(f"[CLEAN] Очистка {remote_dir or '/'} на ESP...")
+    esp_rm_recursive(remote_dir)
+
     for root, dirs, files in os.walk(local_dir):
         rel = os.path.relpath(root, local_dir)
         if rel == '.':
@@ -67,10 +88,7 @@ def sync(local_dir="flash", remote_dir=""):
             esp_put(local_path.replace('\\', '/'), remote_path)
 
 def sync_down(remote_dir="", local_dir="flash_from_esp"):
-    """
-    Скачивание всего содержимого с ESP на локальный диск (зеркало remote_dir -> local_dir).
-    Директории создаются автоматически, файлы скачиваются через `ampy get`.
-    """
+    """Скачивание всего содержимого с ESP на локальный диск."""
     items = esp_ls_recursive(remote_dir)
     if not items:
         print("[WARN] На устройстве ничего не найдено (или недоступен список).")
@@ -80,22 +98,19 @@ def sync_down(remote_dir="", local_dir="flash_from_esp"):
         p = p.strip()
         if not p:
             continue
-        # В выводе ampy каталоги обычно оканчиваются на '/'
         if p.endswith('/'):
             continue
-
         remote_path = p
-        # Построим относительный путь для локального зеркала
         rel = p
         if remote_dir:
             prefix = remote_dir.rstrip('/') + '/'
             if rel.startswith(prefix):
                 rel = rel[len(prefix):]
-        rel = rel.lstrip('/')  # убрать ведущий '/'
-
+        rel = rel.lstrip('/')
         local_path = os.path.join(local_dir, rel)
         esp_get(remote_path, local_path)
 
 if __name__ == "__main__":
-        sync_down(remote_dir='/flash', local_dir='src')
-        #sync(local_dir=args.local, remote_dir=args.remote)
+    # пример: очистка /flash и загрузка локальной папки
+    sync(local_dir="src", remote_dir="/flash")
+    # sync_down(remote_dir='/flash', local_dir='src')
