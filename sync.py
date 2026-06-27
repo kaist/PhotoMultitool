@@ -112,5 +112,5 @@ def sync_down(remote_dir="", local_dir="flash_from_esp"):
 
 if __name__ == "__main__":
     # пример: очистка /flash и загрузка локальной папки
-    sync(local_dir="src", remote_dir="/flash")
-    # sync_down(remote_dir='/flash', local_dir='src')
+    #sync(local_dir="src", remote_dir="/flash")
+    sync_down(remote_dir='/flash', local_dir='src')

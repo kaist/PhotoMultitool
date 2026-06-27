@@ -393,7 +393,6 @@ class CanonRemoteBLE:
             return
 
         if self.verbose: print("Connecting to", _mac_str(addr), "type", at)
-        print(addr,at)
         self.ble.gap_connect(at, addr)
         if not self._wait(lambda: self.connected, timeout_ms):
             if self.verbose: print("show(): connect timeout")
@@ -615,4 +614,3 @@ class App:
         self.bt.disconnect()
         self.app.stop_app()
         self.app.gui.show_main_menu()
-

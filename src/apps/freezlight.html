@@ -266,7 +266,7 @@
   }
 
   // ===== Build P16 (RGB565) from original image blob =====
-  async function buildP16FromBlob(file){
+async function buildP16FromBlob(file) {
   const { data, width: w, height: h } = await decodeToImageData(file);
 
   // ВАЖНО: заголовок меняется местами — P16 h w
@@ -277,22 +277,23 @@
   const row = new Uint8Array(2 * h);
 
   for (let x = 0; x < w; x++) {
-    // Собираем столбец x сверху вниз в один выходной ряд
+    // Собираем столбец x снизу вверх (флип по вертикали)
     for (let y = 0; y < h; y++) {
-      const si = (y * w + x) * 4;       // RGBA индекс исходного пикселя
+      const srcY = h - 1 - y;              // <-- вот тут инверсия
+      const si = (srcY * w + x) * 4;       // RGBA индекс исходного пикселя
       const R = data[si], G = data[si+1], B = data[si+2];
 
       // RGB565 (r5 g6 b5), big-endian (MSB, LSB)
       const v = ((R >>> 3) << 11) | ((G >>> 2) << 5) | (B >>> 3);
-      const j = 2 * y;                  // позиция пикселя в выходной "строке"
+      const j = 2 * y;                     // позиция пикселя в выходной "строке"
       row[j] = (v >>> 8) & 0xFF;
       row[j + 1] = v & 0xFF;
     }
-    parts.push(row.slice());            // без добавления '\n'
+    parts.push(row.slice());               // без добавления '\n'
   }
 
   return new Blob(parts, { type: 'application/octet-stream' });
-  }
+}
 
   async function uploadP16(blob){
     try {

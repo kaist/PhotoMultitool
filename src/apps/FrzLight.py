@@ -3,7 +3,7 @@ import struct, json
 import machine
 import os
 from M5 import *
-from apps.canon import CanonRemoteBLE
+from apps.Canon import CanonRemoteBLE
 import gc
 from driver.neopixel import NeoPixel
 
@@ -206,7 +206,6 @@ class _HTTPServer:
                     f.write(rest)
                     written += len(rest)
                 # дочитываем тело по кускам
-                print(written,total)
                 while written < total:
                     chunk = conn.recv(min(1024, total - written))
                     
@@ -217,11 +216,15 @@ class _HTTPServer:
             if written != total:
                 self._send_400(conn, b"Incomplete body")
                 return
+            else:
+                machine.reset()
         #except:
         #    self._send_400(conn, b"Write error")
         #    return
 
         self._send_json(conn, {"ok": True, "bytes": written})
+        
+        
 
     def _handle_post_settings(self, conn, headers, rest):
         """/settings — принять JSON и сохранить в apps/led_settings.json"""
@@ -255,6 +258,7 @@ class _HTTPServer:
             self._send_400(conn, b"Settings write error"); return
 
         self._send_json(conn, {"ok": True})
+        machine.reset()
 
     def _handle_get_settings(self, conn):
         """Необязательно: GET /settings — вернуть текущие настройки (удобно для отладки)."""
@@ -342,7 +346,7 @@ class _HTTPServer:
 
 class CaptivePortal:
     def __init__(self, ssid="Camera-Setup", ip="192.168.4.1", mask="255.255.255.0",
-                 gw="192.168.4.1", html_path="apps/settings.html"):
+                 gw="192.168.4.1", html_path="apps/settings.html",app=None):
         self.ap = network.WLAN(network.AP_IF)
         self.ap.active(True)
         self.ssid = ssid
@@ -424,8 +428,17 @@ class App:
         self.portal_running=False
 
         self.set_mode=0
-        self.wait_ms=0
-        self.lightness=100
+        try:
+            with open("apps/led_settings2.json", "r") as f:
+                cfg = json.loads(f.read() or "{}")
+                self.wait_ms=cfg['wait_ms']
+                self.lightness=cfg['lightness']
+        except:
+            self.wait_ms=0
+            self.lightness=100
+        
+        
+
         
         gc.collect()
         
@@ -440,13 +453,44 @@ class App:
         self.app.callback_table_long['ok']=self.change_mode
 
         self.draw()
+        self.preview_led()
+        
+        
+    def preview_led(self, scale=2):
+        try:
+            with P16Reader("apps/led.ppm", order="RGB", level=100) as r:
+                w = min(r.width, 135 * scale)   # учитываем масштабирование
+                h = min(r.height, (240-31) * scale)
+                y0 = 31                         # смещение вниз (под заголовок)
+
+                for y in range(h):
+                    row = r.load_next()
+                    if row is None:
+                        break
+                    if y % scale:                # пропускаем лишние строки
+                        continue
+
+                    for x in range(w):
+                        if x % scale:            # пропускаем лишние колонки
+                            continue
+
+                        i = 3 * x
+                        R = row[i]
+                        G = row[i+1]
+                        B = row[i+2]
+                        color = (R << 16) | (G << 8) | B   # RGB888
+
+                    # Поворот + уменьшение
+                        Display.drawPixel(y // scale, y0 + (w // scale - 1 - x // scale), color)
+        except Exception as e:
+            print("preview error:", e)
    
     def start_portal(self):
         if self.portal_running:
             self.stop()
             return
         self.app.ble.active(False)
-        self.portal = CaptivePortal(ssid="FrzLight "+self.app.config['name'], html_path="apps/freezlight.html")
+        self.portal = CaptivePortal(ssid="FrzLight "+self.app.config['name'], html_path="apps/freezlight.html",app=self)
         self.portal_running=True
         self.draw()
 
@@ -466,6 +510,9 @@ class App:
             self.lightness+=10
             if self.lightness>100:self.lightness=100
         self.draw()
+
+        with open("apps/led_settings2.json", "w") as f:
+            f.write(json.dumps({'wait_ms':self.wait_ms,'lightness':self.lightness}))
         
     def minus(self):
         if self.set_mode==0:
@@ -474,53 +521,58 @@ class App:
         else:
             self.lightness-=10
             if self.lightness<0:self.lightness=0
-        self.draw()    
+        self.draw()
+        
+        with open("apps/led_settings2.json", "w") as f:
+            f.write(json.dumps({'wait_ms':self.wait_ms,'lightness':self.lightness}))
         
     
 
         
     def draw(self):
-        Lcd.fillRect(0, 31,135,240-31, 0x000000)
+        Lcd.fillRect(0, 31+72,135,240-31-72, 0x000000)
         Lcd.setFont(Widgets.FONTS.DejaVu12)
         Lcd.setTextColor(0xffffff, 0x000000)
         if self.portal_running:
+            Lcd.fillRect(0, 31,135,240-31, 0x000000)
             w = Lcd.textWidth('Connect to WiFi:')
             x = (125 - w) // 2 + 5
-            y = 40
+            y = 40+10
             Lcd.drawString('Connect to WiFi:', x, y)
 
             w = Lcd.textWidth("FrzLight " + self.app.config['name'])
             x = (125 - w) // 2 + 5
-            y = 60
+            y = 60+10
             Lcd.drawString("FrzLight " + self.app.config['name'], x, y)
         
-        Lcd.drawRect(5, 98 if self.set_mode==0 else 118, 125, 16, 0xFFFFFF)
+        Lcd.drawRect(5, 98+20 if self.set_mode==0 else 118+20, 125, 16, 0xFFFFFF)
         
         txt="Delay "+str(self.wait_ms)+" ms."
         w = Lcd.textWidth(txt)
         x = (125 - w) // 2 + 5
-        y = 100
+        y = 100+20
         Lcd.drawString(txt,x,y)
  
         txt="Lightness "+str(self.lightness)+"%"
         w = Lcd.textWidth(txt)
         x = (125 - w) // 2 + 5
-        y = 120
+        y = 120+20
         Lcd.drawString(txt,x,y)
         
 
         txt="Last time"
         w = Lcd.textWidth(txt)
         x = (125 - w) // 2 + 5
-        y = 160
+        y = 160+20
         Lcd.drawString(txt,x,y)
         Lcd.setFont(Widgets.FONTS.DejaVu24)
         
         txt=str(self.last_time)+' s' if self.last_time else '--'
         w = Lcd.textWidth(txt)
         x = (125 - w) // 2 + 5
-        y = 180
+        y = 180+20
         Lcd.drawString(txt,x,y)
+        print('Free mem',gc.mem_free())
         
 
         
@@ -562,6 +614,8 @@ class App:
                 np.buf=row
                 np.write()
                 time.sleep_ms(self.wait_ms)
+        np.fill((0,0,0))
+        np.write()
                 
         self.last_time=time.time()-t0
         self.app.play_tone(330,50)
