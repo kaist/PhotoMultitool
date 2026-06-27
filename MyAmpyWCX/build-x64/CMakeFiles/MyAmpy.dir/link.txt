@@ -1,0 +1,3 @@
+"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\MyAmpy.dir/objects.a
+C:\msys64\mingw64\bin\ar.exe qc CMakeFiles\MyAmpy.dir/objects.a @CMakeFiles\MyAmpy.dir\objects1.rsp
+C:\msys64\mingw64\bin\g++.exe -shared -o MyAmpy.wfx64 -Wl,--out-implib,libMyAmpy.dll.a -Wl,--major-image-version,0,--minor-image-version,0 -Wl,--whole-archive CMakeFiles\MyAmpy.dir/objects.a -Wl,--no-whole-archive @CMakeFiles\MyAmpy.dir\linkLibs.rsp

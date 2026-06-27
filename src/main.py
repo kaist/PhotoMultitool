@@ -105,22 +105,26 @@ class Waiter:
         
 
 class Menu:
-    def __init__(self, items,app, x=5, y=40, line_height=26, max_visible=7,callback=None,cancel_callback=None):
+    def __init__(self, items,app, x=5, y=40, line_height=26, max_visible=7,callback=None,cancel_callback=None,current=0):
         self.callback=callback
-        self.cancel_callback=None
+        self.cancel_callback=cancel_callback
         Lcd.fillRect(0, 31,135,240-31, color.bg)
         self.app=app
         
         self.old_cl=self.app.callback_table
         self.old_cl_long=self.app.callback_table_long
         self.items = items
-        self.cursor_index = 0
+        self.cursor_index = current if current < len(items) else 0
+        if self.cursor_index < 0:
+            self.cursor_index = 0
         self.scroll_offset = 0
         self.max_visible = max_visible
         self.x = x
         self.y = y
         self.line_height = line_height
         self.width = Lcd.width()-10
+        if self.cursor_index >= self.max_visible:
+            self.scroll_offset = self.cursor_index - self.max_visible + 1
         self.draw()
     
 
@@ -167,6 +171,13 @@ class Menu:
         self.app.callback_table=self.old_cl
         self.app.callback_table_long=self.old_cl_long
         self.callback(self.cursor_index)
+        gc.collect()
+
+    def cancel(self):
+        self.app.callback_table=self.old_cl
+        self.app.callback_table_long=self.old_cl_long
+        if self.cancel_callback:
+            self.cancel_callback()
         gc.collect()
 
 
@@ -274,9 +285,9 @@ class Gui:
             
     def show_list(self,data=[],current=0,callback=None,cancel_callback=None):
         gc.collect()
-        menu=Menu(data,app=self.app,callback=callback,cancel_callback=None)
+        menu=Menu(data,app=self.app,callback=callback,cancel_callback=cancel_callback,current=current)
         self.app.callback_table={'left':menu.up,'right':menu.down,'ok':menu.select}
-        self.app.callback_table_long={'left':None,'right':None,'ok':menu.down}
+        self.app.callback_table_long={'left':None,'right':menu.cancel,'ok':menu.down}
 
     def show_main_menu(self):
         gc.collect()

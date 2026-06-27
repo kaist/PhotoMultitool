@@ -1,0 +1,3 @@
+D:/cloud/Tablet/m5_photomultitool/PhotoMultitool/MyAmpyWCX/build-x64/CMakeFiles/MyAmpy.dir
+D:/cloud/Tablet/m5_photomultitool/PhotoMultitool/MyAmpyWCX/build-x64/CMakeFiles/edit_cache.dir
+D:/cloud/Tablet/m5_photomultitool/PhotoMultitool/MyAmpyWCX/build-x64/CMakeFiles/rebuild_cache.dir

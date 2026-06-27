@@ -1,0 +1,12 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+D:/cloud/Tablet/m5_photomultitool/PhotoMultitool/MyAmpyWCX/resources/MyAmpy.rc
+windows.h
+-
+

@@ -85,6 +85,18 @@ def _adv_get_name(payload: bytes):
 def _mac_str(b: bytes) -> str:
     return ":".join("{:02X}".format(x) for x in b)
 
+def _peer_label(peer: dict) -> str:
+    name = peer.get("name")
+    if name:
+        return name
+    addr = peer.get("addr")
+    if addr:
+        try:
+            return _mac_str(bytes(addr))
+        except:
+            pass
+    return "camera"
+
 class CanonRemoteBLE:
     """
     pair(): скан → connect → (pair/шифрование если доступно) → discovery → отправить handshake (fire-and-forget)
@@ -100,7 +112,8 @@ class CanonRemoteBLE:
         self.store = store
         self.scan_ms = scan_ms
         self.ble=ble
-        self._peer_cache = None
+        self._store_cache = None
+        self._scan_name = None
 
 
         # включим бондинг/Just Works (если сборка поддерживает)
@@ -131,6 +144,7 @@ class CanonRemoteBLE:
         self._mode = None                 # "pair" | "show"
         self._auto_handshake_on_discover = False
         self._disconnect_after_handshake = False
+        self._active_op = None
 
         self.ble.irq(self._irq)
 
@@ -144,6 +158,7 @@ class CanonRemoteBLE:
                     print("Found:", _mac_str(bytes(addr)), "RSSI", rssi, name)
                 self.peer_addr_type = addr_type
                 self.peer_addr = bytes(addr)
+                self._scan_name = name
                 try: self.ble.gap_scan(None)
                 except: pass
                 self.ble.gap_connect(addr_type, addr)
@@ -316,37 +331,121 @@ class CanonRemoteBLE:
 
     def _save_peer(self, extra=None):
         try:
+            if self.peer_addr is None:
+                return
             obj = {"addr_type": int(self.peer_addr_type),
                    "addr": list(self.peer_addr)}
+            if self._scan_name:
+                obj["name"] = self._scan_name
             if extra:
                 obj.update(extra)
-            
-            self.sets_data.update(obj)
+
+            store = self._load_store()
+            idx = self._find_peer_index(store["cameras"], self.peer_addr)
+            if idx < 0:
+                store["cameras"].append(obj)
+                idx = len(store["cameras"]) - 1
+            else:
+                store["cameras"][idx].update(obj)
+            store["current"] = idx
+            self._write_store(store)
             with open(self.store, "w") as f:
-                json.dump(self.sets_data, f)
-                json.dumps(self._peer_cache)
+                json.dump(store, f)
 
             if self.verbose:
                 print("Saved peer:", _mac_str(self.peer_addr), "type", self.peer_addr_type, "extra", extra)
         except Exception as e:
             if self.verbose: print("Save error:", e)
 
+    def _normalize_store(self, data):
+        if isinstance(data, dict) and "cameras" in data:
+            cameras = data.get("cameras")
+            if not isinstance(cameras, list):
+                cameras = []
+            current = data.get("current", 0)
+            try:
+                current = int(current)
+            except:
+                current = 0
+            if current < 0:
+                current = 0
+            if cameras and current >= len(cameras):
+                current = 0
+            return {"current": current, "cameras": cameras}
+        if isinstance(data, dict) and "addr" in data and "addr_type" in data:
+            return {"current": 0, "cameras": [data]}
+        return {"current": 0, "cameras": []}
+
+    def _load_store(self, refresh=False):
+        if (self._store_cache is not None) and not refresh:
+            return self._normalize_store(json.loads(self._store_cache))
+        try:
+            raw = open(self.store).read()
+            self._store_cache = raw
+            return self._normalize_store(json.loads(raw))
+        except:
+            store = {"current": 0, "cameras": []}
+            self._store_cache = json.dumps(store)
+            return store
+
+    def _write_store(self, store):
+        normalized = self._normalize_store(store)
+        self._store_cache = json.dumps(normalized)
+
+    def _find_peer_index(self, cameras, addr):
+        target = list(addr)
+        for idx in range(len(cameras)):
+            if cameras[idx].get("addr") == target:
+                return idx
+        return -1
+
     def _load_peer(self):
         try:
-            if self._peer_cache:
-                d=json.loads(self._peer_cache)
-            else:
-                f=open(self.store).read()
-                d = json.loads(f)
-                self._peer_cache=f
+            store = self._load_store()
+            if not store["cameras"]:
+                return None, None, None, None
+            idx = store["current"]
+            if idx >= len(store["cameras"]):
+                idx = 0
+            d = store["cameras"][idx]
             at = int(d["addr_type"])
             addr = bytes(d["addr"])
             h_init = d.get("h_init")
             h_ctrl = d.get("h_ctrl")
-            print('NAME',d.get('name'))
             return at, addr, h_init, h_ctrl
         except:
             return None, None, None, None
+
+    def get_peers(self):
+        return self._load_store(refresh=True)["cameras"]
+
+    def get_current_index(self):
+        store = self._load_store()
+        if not store["cameras"]:
+            return 0
+        idx = store["current"]
+        if idx >= len(store["cameras"]):
+            return 0
+        return idx
+
+    def get_current_label(self):
+        store = self._load_store()
+        if not store["cameras"]:
+            return "not paired"
+        idx = store["current"]
+        if idx >= len(store["cameras"]):
+            idx = 0
+        return _peer_label(store["cameras"][idx])
+
+    def select_peer(self, index):
+        store = self._load_store(refresh=True)
+        if index < 0 or index >= len(store["cameras"]):
+            return False
+        store["current"] = index
+        self._write_store(store)
+        with open(self.store, "w") as f:
+            json.dump(store, f)
+        return True
 
     # ---------- API ----------
     def pair(self, timeout_ms=20000):
@@ -489,6 +588,8 @@ class App:
         self.sh_state=0
         self.time_to_shoot=0
         self.int_is_start=False
+        self.is_busy=False
+        self.current_camera_label='not paired'
         
     def start(self,app):
         self.app=app
@@ -497,14 +598,46 @@ class App:
         self.sh_state=0
 
         self.bt=CanonRemoteBLE(ble=app.ble,app=self,my_name=self.app.config['name'],store='apps/canon_new.json',verbose=True)
+        self.current_camera_label=self.bt.get_current_label()
         self.app.callback_table['ok']=self.shoot
         self.app.callback_table['right']=self.minus_timer
         self.app.callback_table['left']=self.plus_timer       
-        self.app.callback_table_long['left']=self.start_pair
+        self.app.callback_table_long['left']=self.open_camera_menu
         self.app.callback_table_long['ok']=self.change_mode
+        self.draw()
+
+    def open_camera_menu(self):
+        if self.is_busy:
+            return
+        peers = self.bt.get_peers()
+        items = []
+        current = self.bt.get_current_index()
+        for idx in range(len(peers)):
+            label = _peer_label(peers[idx])
+            if idx == current:
+                label = "* " + label
+            items.append(label)
+        items.append("+ Add camera")
+        self.app.gui.show_list(
+            data=items,
+            current=current,
+            callback=self.camera_menu_select,
+            cancel_callback=self.draw
+        )
+
+    def camera_menu_select(self, index):
+        peers = self.bt.get_peers()
+        if index >= len(peers):
+            self.start_pair()
+            return
+        self.bt.select_peer(index)
+        self.current_camera_label=self.bt.get_current_label()
         self.draw()
         
     def start_pair(self):
+        if self.is_busy:
+            return
+        self.is_busy=True
         self.app.gui.waiter.start(title='Pairing...')
         self.bt.pair()
     def set_sh(self,state):
@@ -512,10 +645,15 @@ class App:
         self.draw()
         
     def shoot(self):
+        if self.is_busy:
+            return
         
         if self.timer_mode==0:
-            
-            self.bt.show()
+            self.is_busy=True
+            try:
+                self.bt.show()
+            finally:
+                self.is_busy=False
         else:
             if self.int_mode and (not self.int_is_start):
                 self.int_is_start=True
@@ -534,6 +672,8 @@ class App:
             self.timer.init(mode=Timer.PERIODIC, period=1000, callback=self.timer_callback)
             
     def timer_callback(self,event=None):
+        if self.is_busy:
+            return
         self.time_to_shoot-=1
         self.draw()
         if self.time_to_shoot==0:
@@ -542,8 +682,11 @@ class App:
                 self.time_to_shoot=0
             else:
                 self.time_to_shoot=self.timer_mode
-                
-            self.bt.show()
+            self.is_busy=True
+            try:
+                self.bt.show()
+            finally:
+                self.is_busy=False
             
         
             
@@ -566,6 +709,15 @@ class App:
             x = (125 - w) // 2+5
             y = 40                            
             Lcd.drawString('intervalometer', x, y)
+        cam_name = self.current_camera_label
+        if len(cam_name) > 18:
+            cam_name = cam_name[:18]
+        Lcd.setFont(Widgets.FONTS.DejaVu12)
+        Lcd.setTextColor(0xffffff, 0x000000)
+        w = Lcd.textWidth(cam_name)
+        x = (125 - w) // 2+5
+        y = 56 if self.int_mode else 40
+        Lcd.drawString(cam_name, x, y)
 
         if self.sh_state==3:
             Lcd.setFont(Widgets.FONTS.DejaVu12)
@@ -605,6 +757,8 @@ class App:
         self.app.save_set("canon_int",1 if self.int_mode else 0,"int")
          
     def pair_done(self):
+        self.is_busy=False
+        self.current_camera_label=self.bt.get_current_label()
         self.app.gui.waiter.stop()
         self.draw()
         
